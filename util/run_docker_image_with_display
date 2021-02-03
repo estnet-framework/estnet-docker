@@ -1,0 +1,42 @@
+#!/bin/bash
+
+if [ $(id -u) = 0 ]; then
+    echo 'ERROR: Do not run as root. This script uses sudo to acquire privileges.'
+    exit 1
+fi
+
+FLAG_HELP=false
+FLAG_HEADLESS=false
+FLAG_UBUNTU=false
+
+
+for d in "$@"
+do
+    if [[ $d != '-'* ]]; then
+        DOCKER_IMAGE=($d)
+    fi
+    if [ $d = '-h' -o $d = '--help' ]; then
+        FLAG_HELP=true;
+    fi
+done
+
+if $FLAG_HELP; then
+    printf '
+run_docker_image_with_display DOCKER_IMAGE ...
+   Run docker container based on the given image.
+
+  -h, --help        Display this message and exit.
+
+The $DISPLAY variable in the container is set, and the calling user'\''s
+~/.Xauthority is mounted to ~/.Xauthority in the container, so that it'\''s
+possible to run X applications, e.g., the omnet++ IDE.
+
+
+Original author: Timon Petermann <timonpetermann@aol.com>
+'
+    exit 0
+fi
+
+
+sudo docker pull $DOCKER_IMAGE
+sudo docker run --rm -it --network=host -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=unix$DISPLAY $DOCKER_IMAGE

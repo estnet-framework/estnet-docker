@@ -1,0 +1,138 @@
+#!/bin/bash
+
+if [ $(id -u) = 0 ]; then
+    echo 'ERROR: Do not run as root. This script uses sudo to acquire privileges.'
+    exit 1
+fi
+
+FLAG_HELP=false
+FLAG_HEADLESS=false
+FLAG_UBUNTU=false
+
+ADD_ARGS=("-v" "$HOME/.Xauthority:/home/$(whoami)/.Xauthority" "-e" "DISPLAY=$DISPLAY" "--device" "/dev/dri" )
+
+for d in "$@"
+do
+    if [[ $d != '-'* ]]; then
+        WORKSPACE_SUBDIRS+=($d)
+    fi
+    if [ $d = '-h' -o $d = '--help' ]; then
+        FLAG_HELP=true;
+    fi
+    if [ $d = '-l' -o $d = '--headless' ]; then
+        FLAG_HEADLESS=true;
+    fi
+done
+
+if $FLAG_HELP; then
+    printf '
+dockeropp [-l] [-u] [DIRECTORY]...
+   Run (archlinux/ubuntu)/opp-estnet[-headless] docker container with [DIRECTORIE]s as volumes.
+
+  -h, --help        Display this message and exit.
+  -l, --headless    Use headless container, do not mount ~/.Xauthority
+
+Each directory D given at the command line is mounted to "/workspace/$D"
+inside the container. "/workspace/inet4" already contains a compiled INET4
+framework (see Dockerfile).
+
+If no directory is given, all directories in ./ that contain a "src" or
+"simulations" subdirecotry are mounted.
+
+The shell in the container is started with the same uid/gid as the user calling
+this script, so writes to the volumes will have this uid/gid.
+
+The $DISPLAY variable in the container is set, and the calling user'\''s
+~/.Xauthority is mounted to ~/.Xauthority in the container, so that it'\''s
+possible to run X applications, e.g., the omnet++ IDE.
+
+
+Original author: Holger Doebler <holger.doebler@informatik.hu-berlin.de>
+'
+    exit 0
+fi
+
+# get this file's directory, thanks to https://stackoverflow.com/a/246128
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+    DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+
+[[ -v GIT_REMOTE           ]] || GIT_REMOTE=`git -C $DIR remote -v | grep '^origin.*fetch' | sed -nre 's;.*https://([^/]*)/([^.]*)\.git.*|.*git@([^:]*):([^.]*)\.git.*;\1\3:\2\4;p'`
+[[ -v CI_SERVER_HOST       ]] || CI_SERVER_HOST=`echo $GIT_REMOTE | sed -nre 's/(.*):.*/\1/p'`
+DOCKER_IMAGE_REPOSITORY="docker.pkg.github.com/estnet-framework/estnet-docker/ubuntu_opp_inet_base"
+DOCKERCONTAINER="opp-ubuntu"
+
+declare -a WORKSPACE_SUBDIRS
+
+if [ ${#WORKSPACE_SUBDIRS[@]} -eq 0 ]
+then
+    for d in $(ls)
+    do
+        if [ -d $d/src -o -d $d/simulations ]
+        then
+           WORKSPACE_SUBDIRS+=($d)
+        fi
+    done
+fi
+
+declare -a ADD_ARGS
+for d in ${WORKSPACE_SUBDIRS[@]}
+do
+    if [ $d = inet4 ]; then
+        echo 'INFO: skipping ./inet4 as /workspace/inet4 comes with the image.'
+    else
+        ADD_ARGS+=('-v' "$(realpath $d):/workspace/$d")
+    fi
+done
+
+# test whether docker service is running
+DOCKER_START='sudo systemctl start docker.service'
+if ! sudo docker version &> /dev/null ; then
+#    if ! sudo docker version 2>&1 | grep -q 'Cannot connect to the Docker daemon' ; then
+    echo 'ERROR: Is the docker daemon running? If using systemd, you can problably start it using'
+    echo '```'
+    echo $DOCKER_START
+    echo '```'
+    echo -n 'Shall I do that for you? (y/n) ' ; read USERINPUT
+    if echo $USERINPUT | grep -iq '^y' ; then
+        echo -n 'starting docker ... '
+        if $DOCKER_START ; then
+            echo 'done.'
+        else
+            echo 'FAILED.'
+            exit 1
+        fi
+    else
+        exit 1
+    fi
+fi
+
+echo -n "pulling docker image $DOCKER_IMAGE_REPOSITORY ; this may take a while ... "
+if sudo docker pull -q $DOCKER_IMAGE_REPOSITORY 2>&1 | grep -q 'denied: access forbidden' ; then
+    echo
+    echo 'ERROR: docker says "denied: access forbidden"; maybe you forgot to "docker login"?'
+    echo '==> sudo docker login -u <username> -p <your_gitlab_access_token>' $CI_REGISTRY
+    echo "  to create an access token, go to https://$CI_SERVER_HOST/profile/personal_access_tokens"
+    exit 2
+fi
+echo 'done.'
+
+# the home directory needs to be created only in headless mode
+if $FLAG_HEADLESS; then
+    USERADD='useradd -m'
+else
+    USERADD=useradd
+fi
+
+# The BASH_CMD does the following steps:
+# - create user with same user name and uid
+# - set an empty password for that user and add him to wheel, so he can sudo
+# - chown all omnet++ and inet directories inside the container to that user
+# - start a bash as login shell
+BASH_CMD="$USERADD -u $(id -u) -G wheel $(whoami) && passwd -dq $(whoami) && sudo chown $(whoami).$(whoami) -R /workspace /workspace/inet4 /omnetpp-5.5.1 /home/$(whoami) && sudo -u $(whoami) -EH -- env -C /workspace bash -l"
+
+sudo docker run --rm -it --name $DOCKERCONTAINER --network=host ${ADD_ARGS[@]} $DOCKER_IMAGE_REPOSITORY bash -c "$BASH_CMD"

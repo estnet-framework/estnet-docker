@@ -6,7 +6,7 @@ This directory contains helper scripts to run the docker containers
 To run the docker image with pre-installed ESTNeT use the run_docker_image_with_display script.
 For example:
 ``` shell
-'./run_docker_image_with_display docker.pkg.github.com/estnet-framework/estnet/estnet_ubuntu
+./run_docker_image_with_display docker.pkg.github.com/estnet-framework/estnet/estnet_ubuntu
 ```
 
 # Developer image

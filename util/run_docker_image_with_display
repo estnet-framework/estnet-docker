@@ -38,5 +38,37 @@ Original author: Timon Petermann <timonpetermann@aol.com>
 fi
 
 
+# test whether docker service is running
+DOCKER_START='sudo systemctl start docker.service'
+if ! sudo docker version &> /dev/null ; then
+#    if ! sudo docker version 2>&1 | grep -q 'Cannot connect to the Docker daemon' ; then
+    echo 'ERROR: Is the docker daemon running? If using systemd, you can problably start it using'
+    echo '```'
+    echo $DOCKER_START
+    echo '```'
+    echo -n 'Shall I do that for you? (y/n) ' ; read USERINPUT
+    if echo $USERINPUT | grep -iq '^y' ; then
+        echo -n 'starting docker ... '
+        if $DOCKER_START ; then
+            echo 'done.'
+        else
+            echo 'FAILED.'
+            exit 1
+        fi
+    else
+        exit 1
+    fi
+fi
+
+echo -n "pulling docker image $DOCKER_IMAGE_REPOSITORY ; this may take a while ... "
+if sudo docker pull -q $DOCKER_IMAGE_REPOSITORY 2>&1 | grep -q 'denied: access forbidden' ; then
+    echo
+    echo 'ERROR: docker says "denied: access forbidden"; maybe you forgot to "docker login"?'
+    echo '==> sudo docker login -u <username> -p <your_gitlab_access_token>' $CI_REGISTRY
+    echo "  to create an access token, go to https://$CI_SERVER_HOST/profile/personal_access_tokens"
+    exit 2
+fi
+echo 'done.'
+
 sudo docker pull $DOCKER_IMAGE
-sudo docker run --rm -it --network=host -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=unix$DISPLAY $DOCKER_IMAGE
+sudo docker run --rm -it --network host -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=$DISPLAY $DOCKER_IMAGE

@@ -10,7 +10,7 @@ LABEL maintainer="Timon Petermann <timonpetermann@aol.com>"
 FROM base as builder
 ARG VERSION=0.9
 WORKDIR /workspace
-RUN apt-get -q update && apt-get -qy upgrade && apt-get -qy install wget
+RUN apt-get -q update && apt-get -qy upgrade && apt-get -qy install wget && apt-get -qy install git
 RUN wget https://github.com/estnet-framework/estnet/archive/v$VERSION.tar.gz \
          -O estnet-src.tgz --progress=dot:mega && \
          tar xf estnet-src.tgz && rm estnet-src.tgz && \
@@ -25,14 +25,24 @@ RUN opp_makemake --nolink -f --deep -O out -KINET_PROJ=$INET_PROJ -DINET_IMPORT 
          cd ..
 
 RUN make -j$(nproc) MODE=release && \
-    make -j$(nproc) MODE=debug && \
-    rm -rf out
+    make -j$(nproc) MODE=debug
+RUN sed -i 's/osgi\.instance\.area\.default=\.\.\/samples/osgi\.instance\.area\.default=\/workspace/' /omnetpp-5.5.1/ide/configuration/config.ini && \
+    sed -i 's/osgi\.instance\.area\.default=$IDEDIR\/\.\.\/samples/osgi\.instance\.area\.default=\/workspace/' /omnetpp-5.5.1/bin/omnetpp
+WORKDIR /workspace
+RUN git clone https://github.com/estnet-framework/estnet-template.git
 
 
-# second stage - copy only the final binaries (to get rid of the 'out' folder and reduce the image size)
+
+# second stage - copy the final binaries 
 FROM base
 RUN mkdir -p /workspace/estnet
+RUN mkdir -p /workspace/estnet-template
 WORKDIR /workspace/estnet
 COPY --from=builder /workspace/estnet/ .
+WORKDIR /workspace/estnet-template
+COPY --from=builder /workspace/estnet-template/ .
+COPY --from=builder /omnetpp-5.5.1/ide/configuration/config.ini /omnetpp-5.5.1/ide/configuration/config.ini
+COPY --from=builder /omnetpp-5.5.1/bin/omnetpp /omnetpp-5.5.1/bin/omnetpp
+RUN sed -i 's/<project>inet<\/project>/<project>inet4<\/project>/' /workspace/estnet/.project
+WORKDIR /workspace
 ENV ESTNET_VER=0.9
-
